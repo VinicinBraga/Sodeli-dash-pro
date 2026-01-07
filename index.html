@@ -5,6 +5,13 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Dashboard de Monitoramento – Grupo Sodéli</title>
+  <link rel="icon" href="/favicon.ico?v=2" />
+  <link rel="shortcut icon" href="/favicon.ico?v=2" />
+  <script>
+    tailwind.config = {
+      darkMode: "class",
+    };
+  </script>
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
@@ -12,6 +19,25 @@
       font-family: 'Inter', sans-serif;
       background-color: #ffffff;
       color: #333333;
+    }
+
+    /* ✅ Quando a classe "dark" estiver no <html>, o body muda também */
+    html.dark body {
+      background-color: #0F0F0F;
+      color: #F3F4F6;
+    }
+
+    /* (opcional, mas fica bem melhor) scroll no dark */
+    html.dark ::-webkit-scrollbar-track {
+      background: #151515;
+    }
+
+    html.dark ::-webkit-scrollbar-thumb {
+      background: #3a3a3a;
+    }
+
+    html.dark ::-webkit-scrollbar-thumb:hover {
+      background: #4a4a4a;
     }
 
     /* Custom Scrollbar for better aesthetics */
@@ -31,6 +57,75 @@
 
     ::-webkit-scrollbar-thumb:hover {
       background: #a8a8a8;
+    }
+
+
+    /* Fundo do main (quando seu Layout estiver dark) */
+    html.dark .app-main {
+      background: #121212;
+    }
+
+    /* “Cards” genéricos: pega muita coisa baseada em fundo branco */
+    html.dark .card,
+    html.dark [data-card],
+    html.dark .bg-white {
+      background: #161616 !important;
+      color: #f3f4f6 !important;
+      border-color: #2a2a2a !important;
+    }
+
+    /* Bordas comuns */
+    html.dark .border,
+    html.dark [class*="border-"] {
+      border-color: #2a2a2a;
+    }
+
+    /* Textos cinza comuns */
+    html.dark .text-gray-900 {
+      color: #f3f4f6 !important;
+    }
+
+    html.dark .text-gray-800 {
+      color: #e5e7eb !important;
+    }
+
+    html.dark .text-gray-700 {
+      color: #d1d5db !important;
+    }
+
+    html.dark .text-gray-600 {
+      color: #cbd5e1 !important;
+    }
+
+    html.dark .text-gray-500 {
+      color: #94a3b8 !important;
+    }
+
+    html.dark .text-gray-400 {
+      color: #94a3b8 !important;
+    }
+
+    /* Inputs / Selects / Textareas (shadcn e nativos) */
+    html.dark input,
+    html.dark select,
+    html.dark textarea {
+      background: #141414 !important;
+      color: #f3f4f6 !important;
+      border-color: #2a2a2a !important;
+    }
+
+    html.dark input::placeholder,
+    html.dark textarea::placeholder {
+      color: #94a3b8 !important;
+    }
+
+    /* Botões “secundários” claros */
+    html.dark .bg-gray-100 {
+      background: #1f2937 !important;
+    }
+
+    html.dark .hover\:bg-gray-50:hover {
+      background: #1f2937 !important;
     }
   </style>
   <script type="importmap">

@@ -1,3 +1,12 @@
+# secrets / env
+.env
+secrets/
+*.json
+
+# deps / build
+node_modules/
+dist/
+
 # Logs
 logs
 *.log
