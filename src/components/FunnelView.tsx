@@ -38,6 +38,8 @@ const platformLabel: Record<string, string> = {
 
 type PeriodKey = "today" | "month" | "quarter" | "year" | "custom";
 
+const FILTERS_KEY = "sodeli_funnel_filters_v1";
+
 function todayISO(): string {
   const d = new Date();
   const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -82,18 +84,50 @@ function normalizeDateValue(date: any): string {
   return String(date);
 }
 
+function safeReadFilters(): any | null {
+  try {
+    const raw = localStorage.getItem(FILTERS_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function isValidISODate(s: any): s is string {
+  return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
+
 export const FunnelView: React.FC = () => {
   const [loading, setLoading] = useState(true);
 
-  // ===== Filtros
-  const [period, setPeriod] = useState<PeriodKey>("custom");
-  const [dateStart, setDateStart] = useState<string>(daysAgoISO(30));
-  const [dateEnd, setDateEnd] = useState<string>(todayISO());
-  const [platform, setPlatform] = useState<string>("all");
+  // ===== Filtros (persistidos)
+  const saved = safeReadFilters();
+
+  const [period, setPeriod] = useState<PeriodKey>(
+    (saved?.period as PeriodKey) ?? "custom"
+  );
+
+  const [dateStart, setDateStart] = useState<string>(
+    isValidISODate(saved?.dateStart) ? saved.dateStart : daysAgoISO(30)
+  );
+
+  const [dateEnd, setDateEnd] = useState<string>(
+    isValidISODate(saved?.dateEnd) ? saved.dateEnd : todayISO()
+  );
+
+  const [platform, setPlatform] = useState<string>(saved?.platform ?? "all");
 
   const [data, setData] = useState<OverviewResponse | null>(null);
   const [selectedPlatform, setSelectedPlatform] =
     useState<PlatformPerformance | null>(null);
+
+  // salva filtros no localStorage
+  useEffect(() => {
+    localStorage.setItem(
+      FILTERS_KEY,
+      JSON.stringify({ period, dateStart, dateEnd, platform })
+    );
+  }, [period, dateStart, dateEnd, platform]);
 
   // Quando o período muda, ajusta as datas (exceto custom)
   useEffect(() => {

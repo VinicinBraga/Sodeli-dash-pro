@@ -1,4 +1,10 @@
-export type Platform = 'google_ads' | 'meta_ads' | 'linkedin_ads' | 'all';
+export type Platform = "google_ads" | "meta_ads" | "linkedin_ads" | "all";
+
+/**
+ * BigQuery (Node client) às vezes devolve campos como objeto { value: "..." }
+ * em vez de string pura. Tipamos isso aqui para evitar "Invalid Date" e erros do TS.
+ */
+export type BQValue<T> = T | { value: T } | null | undefined;
 
 export interface OverviewMetrics {
   total_users: number;
@@ -31,24 +37,34 @@ export interface PlatformPerformance extends OverviewMetrics {
 
 export interface Deal {
   id: string;
-  win_at?: string; // or closed_at
-  created_at: string;
+
+  // BigQuery pode devolver como string ou { value: string }
+  win_at?: BQValue<string>; // or closed_at
+  created_at: BQValue<string>;
+
   amount_total: number;
   organization_name: string;
   user_name: string; // Responsible
   email: string;
   phone?: string;
-  deal_source_name?: string;
+
+  // Origem pode vir como string ou { value: string } e às vezes null
+  deal_source_name?: BQValue<string>;
+
   deal_stage_name: string;
   win: boolean;
 }
 
 export interface Contact {
   id: string;
-  created_at: string;
+
+  // Datas também podem vir como string ou { value: string }
+  created_at: BQValue<string>;
+
   name: string;
   email: string;
-  last_conversion_date?: string;
+
+  last_conversion_date?: BQValue<string>;
 }
 
 export interface PaginatedResponse<T> {
@@ -65,5 +81,5 @@ export interface FilterOptions {
   search?: string;
   page?: number;
   pageSize?: number;
-  type?: 'won' | 'opportunity' | 'qualified';
+  type?: "won" | "opportunity" | "qualified";
 }

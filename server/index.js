@@ -43,6 +43,22 @@ const bigquery = new BigQuery({
 
 const DATASET = process.env.BQ_DATASET;
 
+// ===== Utils
+function todayISO() {
+  const d = new Date();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
+function daysAgoISO(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
 // ===== Healthcheck
 app.get("/health", (_, res) => {
   res.json({ ok: true });
@@ -55,10 +71,15 @@ app.get("/api/overview", async (req, res) => {
   try {
     const { dateStart, dateEnd, platform } = req.query;
 
-    let where = [];
-    if (dateStart) where.push(`date >= DATE('${dateStart}')`);
-    if (dateEnd) where.push(`date <= DATE('${dateEnd}')`);
-    if (platform && platform !== "all") where.push(`platform = '${platform}'`);
+    // defaults (se não vier, pega últimos 30 dias)
+    const start = dateStart || daysAgoISO(30);
+    const end = dateEnd || todayISO();
+    const plat = platform || "all";
+
+    const where = [];
+    where.push(`date >= DATE(@start)`);
+    where.push(`date <= DATE(@end)`);
+    if (plat !== "all") where.push(`platform = @platform`);
 
     const whereClause = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
@@ -86,7 +107,10 @@ app.get("/api/overview", async (req, res) => {
       ORDER BY date ASC
     `;
 
-    const [rows] = await bigquery.query({ query });
+    const params = { start, end };
+    if (plat !== "all") params.platform = plat;
+
+    const [rows] = await bigquery.query({ query, params });
 
     const total = rows.reduce(
       (acc, r) => {
@@ -122,14 +146,28 @@ app.get("/api/overview", async (req, res) => {
 // ============================
 app.get("/api/deals", async (req, res) => {
   try {
+    const { dateStart, dateEnd, limit } = req.query;
+
+    // defaults seguros (mantém comportamento ok se frontend não mandar)
+    const start = dateStart || daysAgoISO(30);
+    const end = dateEnd || todayISO();
+
+    // limite controlado (evita abuso)
+    const lim = Math.min(Number(limit || 5000), 20000);
+
     const query = `
       SELECT *
       FROM \`${process.env.BQ_PROJECT_ID}.${DATASET}.rd_station__deals\`
-      ORDER BY created_at DESC
-      LIMIT 500
+      WHERE DATE(COALESCE(win_at, created_at)) BETWEEN DATE(@start) AND DATE(@end)
+      ORDER BY COALESCE(win_at, created_at) DESC
+      LIMIT @lim
     `;
 
-    const [rows] = await bigquery.query({ query });
+    const [rows] = await bigquery.query({
+      query,
+      params: { start, end, lim },
+    });
+
     res.json(rows);
   } catch (err) {
     console.error(err);
@@ -142,14 +180,25 @@ app.get("/api/deals", async (req, res) => {
 // ============================
 app.get("/api/contacts", async (req, res) => {
   try {
+    const { dateStart, dateEnd, limit } = req.query;
+
+    const start = dateStart || daysAgoISO(30);
+    const end = dateEnd || todayISO();
+    const lim = Math.min(Number(limit || 5000), 20000);
+
     const query = `
       SELECT *
       FROM \`${process.env.BQ_PROJECT_ID}.${DATASET}.rd_station__contacts\`
+      WHERE DATE(created_at) BETWEEN DATE(@start) AND DATE(@end)
       ORDER BY created_at DESC
-      LIMIT 500
+      LIMIT @lim
     `;
 
-    const [rows] = await bigquery.query({ query });
+    const [rows] = await bigquery.query({
+      query,
+      params: { start, end, lim },
+    });
+
     res.json(rows);
   } catch (err) {
     console.error(err);
