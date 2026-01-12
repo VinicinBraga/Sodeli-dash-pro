@@ -404,9 +404,14 @@ export const FunnelView: React.FC = () => {
           />
           <MetricCard
             title="Vendas"
-            value={formatNumber(total.sales)}
+            value={formatNumber((total as any).sales_crm ?? total.sales)}
             subValue={`Taxa: ${formatPercent(total.rate_opportunity_to_sale)}`}
             trend="up"
+            icon={<DollarSign className="h-4 w-4" />}
+          />
+          <MetricCard
+            title="Valor de Vendas (R$)"
+            value={formatCurrency((total as any).revenue_crm ?? 0)}
             icon={<DollarSign className="h-4 w-4" />}
           />
           <MetricCard

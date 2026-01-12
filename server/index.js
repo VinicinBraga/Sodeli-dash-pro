@@ -19,11 +19,13 @@ app.use(
   cors({
     origin: (origin, cb) => {
       if (!origin) return cb(null, true); // curl/postman
-      return allowedOrigins.has(origin) ? cb(null, true) : cb(null, false); // só bloqueia silencioso, sem jogar erro e derrubar o app
+      return allowedOrigins.has(origin) ? cb(null, true) : cb(null, false); // bloqueia silencioso
     },
     methods: ["GET", "OPTIONS"],
   })
 );
+
+app.use(express.json());
 
 // ===== Resolve credenciais (transforma em caminho absoluto)
 const credPath = process.env.GOOGLE_APPLICATION_CREDENTIALS
@@ -71,6 +73,7 @@ app.get("/api/overview", async (req, res) => {
     const end = dateEnd || todayISO();
     const plat = platform || "all";
 
+    // ===== 1) Série diária (dashboard_overview_daily)
     const where = [];
     where.push(`date >= DATE(@start)`);
     where.push(`date <= DATE(@end)`);
@@ -129,7 +132,36 @@ app.get("/api/overview", async (req, res) => {
       }
     );
 
-    res.json({ total, platforms: rows });
+    // ===== 2) Receita real do CRM (deals ganhos) no período
+    // Observação:
+    // - aqui usamos win_at (data da venda). Se win_at for null, o registro não entra.
+    // - não filtramos por "plat" porque deals não têm plataforma confiável (a não ser que você tenha um campo mapeado).
+    const crmQuery = `
+      SELECT
+        COUNT(1) AS sales_crm,
+        SUM(COALESCE(amount_total, 0)) AS revenue_crm
+      FROM \`${process.env.BQ_PROJECT_ID}.${DATASET}.rd_station__deals\`
+      WHERE
+        (win IS TRUE OR LOWER(CAST(win AS STRING)) = 'true')
+        AND win_at IS NOT NULL
+        AND DATE(win_at) BETWEEN DATE(@start) AND DATE(@end)
+    `;
+
+    const [crmRows] = await bigquery.query({
+      query: crmQuery,
+      params: { start, end },
+    });
+
+    const crm = crmRows?.[0] || { sales_crm: 0, revenue_crm: 0 };
+
+    res.json({
+      total: {
+        ...total,
+        sales_crm: Number(crm.sales_crm || 0),
+        revenue_crm: Number(crm.revenue_crm || 0),
+      },
+      platforms: rows,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Failed to fetch overview" });
@@ -143,11 +175,11 @@ app.get("/api/deals", async (req, res) => {
   try {
     const { dateStart, dateEnd, limit } = req.query;
 
-    // defaults seguros (mantém comportamento ok se frontend não mandar)
+    // defaults seguros
     const start = dateStart || daysAgoISO(30);
     const end = dateEnd || todayISO();
 
-    // limite controlado (evita abuso)
+    // limite controlado
     const lim = Math.min(Number(limit || 5000), 20000);
 
     const query = `
