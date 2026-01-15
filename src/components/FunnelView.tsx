@@ -27,6 +27,30 @@ import {
   Legend,
 } from "recharts";
 
+import ga4Logo from "../assets/ga4Logo.png";
+import googleLogo from "../assets/googleAdsLogo.png";
+import metaLogo from "../assets/metaAdsLogo.png";
+import linkedinLogo from "../assets/linkedinLogo.jpeg";
+import rdLogo from "../assets/rdStationLogo.png";
+
+const PAID_MEDIA_LOGOS = [
+  { src: googleLogo, alt: "Google Ads" },
+  { src: metaLogo, alt: "Meta Ads" },
+  { src: linkedinLogo, alt: "LinkedIn Ads" },
+];
+
+const GA4_LOGOS = [{ src: ga4Logo, alt: "GA4" }];
+const RD_LOGOS = [{ src: rdLogo, alt: "RD Station" }];
+
+function getPaidLogoByPlatform(plat: string) {
+  if (plat === "google_ads") return [{ src: googleLogo, alt: "Google Ads" }];
+  if (plat === "meta_ads") return [{ src: metaLogo, alt: "Meta Ads" }];
+  if (plat === "linkedin_ads")
+    return [{ src: linkedinLogo, alt: "LinkedIn Ads" }];
+  // all/other => mostra as 3
+  return PAID_MEDIA_LOGOS;
+}
+
 type OverviewResponse = {
   total: OverviewMetrics;
   platforms: any[];
@@ -182,6 +206,40 @@ function safeReadFilters(): any | null {
 
 function isValidISODate(s: any): s is string {
   return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+}
+
+function SourceBadge({
+  logos,
+  alt,
+}: {
+  logos: { src: string; alt: string }[];
+  alt?: string;
+}) {
+  return (
+    <div
+      className="
+        absolute bottom-3 right-2 
+        flex items-center gap-1
+        translate-y-[-3px]
+      "
+      title={alt}
+    >
+      {logos.map((l) => (
+        <img
+          key={l.alt}
+          src={l.src}
+          alt={l.alt}
+          className="
+            h-4 w-4
+            object-contain
+            border-none
+            outline-none
+            shadow-none
+          "
+        />
+      ))}
+    </div>
+  );
 }
 
 export const FunnelView: React.FC = () => {
@@ -649,71 +707,113 @@ export const FunnelView: React.FC = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {/* ESQUERDA: Big Numbers */}
           <div className="lg:col-span-2 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <MetricCard
-              title="Investimentos"
-              value={formatCurrency(total.spend)}
-              subValue={`ROAS: ${formatNumber(
-                total.spend
-                  ? (total.revenue_crm ?? total.revenue ?? 0) / total.spend
-                  : 0
-              )}`}
-              trend="neutral"
-              icon={<BarChart3 className="h-4 w-4" />}
-            />
+            <div className="relative">
+              <MetricCard
+                title="Investimentos"
+                value={formatCurrency(total.spend)}
+                subValue={`ROAS: ${formatNumber(
+                  total.spend
+                    ? (total.revenue_crm ?? total.revenue ?? 0) / total.spend
+                    : 0
+                )}`}
+                icon={<BarChart3 className="h-4 w-4" />}
+              />
 
-            <MetricCard
-              title={topLabel}
-              value={formatNumber(topValue)}
-              subValue={`${topSubLabel}: ${topSubValue}`}
-              trend="neutral"
-              icon={<MousePointerClick className="h-4 w-4" />}
-            />
+              <SourceBadge
+                logos={getPaidLogoByPlatform(platformApplied)}
+                alt="Mídia paga"
+              />
+            </div>
 
-            <MetricCard
-              title="Leads"
-              value={formatNumber(total.leads ?? 0)}
-              subValue={`CPL: ${formatCurrency(
-                total.leads ? total.spend / total.leads : 0
-              )}`}
-              trend="neutral"
-              icon={<Filter className="h-4 w-4" />}
-            />
+            <div className="relative">
+              <MetricCard
+                title={topLabel}
+                value={formatNumber(topValue)}
+                subValue={`${topSubLabel}: ${topSubValue}`}
+                icon={<MousePointerClick className="h-4 w-4" />}
+              />
 
-            <MetricCard
-              title="Oportunidades"
-              value={formatNumber(total.opportunities ?? 0)}
-              subValue={`CPO: ${formatCurrency(
-                total.opportunities ? total.spend / total.opportunities : 0
-              )}`}
-              trend="neutral"
-              icon={<TrendingUp className="h-4 w-4" />}
-            />
+              <SourceBadge
+                logos={
+                  isFiltered
+                    ? getPaidLogoByPlatform(platformApplied)
+                    : GA4_LOGOS
+                }
+                alt={isFiltered ? "Mídia paga" : "GA4"}
+              />
+            </div>
 
-            <MetricCard
-              title="Vendas"
-              value={formatNumber(total.sales_crm ?? total.sales ?? 0)}
-              subValue={`CPA: ${formatCurrency(
-                total.sales_crm ?? total.sales
-                  ? total.spend / (total.sales_crm ?? total.sales)
-                  : 0
-              )}`}
-              trend="neutral"
-              icon={<ShoppingCart className="h-4 w-4" />}
-            />
+            <div className="relative">
+              <MetricCard
+                title="Leads"
+                value={formatNumber(total.leads ?? 0)}
+                subValue={`CPL: ${formatCurrency(
+                  total.leads ? total.spend / total.leads : 0
+                )}`}
+                icon={<Filter className="h-4 w-4" />}
+              />
 
-            <MetricCard
-              title="Receita"
-              value={formatCurrency(total.revenue_crm ?? total.revenue ?? 0)}
-              subValue={`Ticket Médio: ${formatCurrency(
-                total.sales_crm ?? total.sales
-                  ? (total.revenue_crm ?? total.revenue ?? 0) /
-                      (total.sales_crm ?? total.sales)
-                  : 0
-              )}`}
-              trend="neutral"
-              icon={<DollarSign className="h-4 w-4" />}
-              className="border-red-100 bg-red-50/50"
-            />
+              <SourceBadge
+                logos={
+                  platformApplied === "other"
+                    ? RD_LOGOS
+                    : getPaidLogoByPlatform(platformApplied)
+                }
+                alt={platformApplied === "other" ? "RD Station" : "Mídia paga"}
+              />
+            </div>
+
+            <div className="relative">
+              <MetricCard
+                title="Oportunidades"
+                value={formatNumber(total.opportunities ?? 0)}
+                subValue={`CPO: ${formatCurrency(
+                  total.opportunities ? total.spend / total.opportunities : 0
+                )}`}
+                icon={<TrendingUp className="h-4 w-4" />}
+              />
+
+              <SourceBadge
+                logos={
+                  platformApplied === "other"
+                    ? RD_LOGOS
+                    : getPaidLogoByPlatform(platformApplied)
+                }
+                alt={platformApplied === "other" ? "RD Station" : "Mídia paga"}
+              />
+            </div>
+
+            <div className="relative">
+              <MetricCard
+                title="Vendas"
+                value={formatNumber(total.sales_crm ?? total.sales ?? 0)}
+                subValue={`CPA: ${formatCurrency(
+                  total.sales_crm ?? total.sales
+                    ? total.spend / (total.sales_crm ?? total.sales)
+                    : 0
+                )}`}
+                icon={<ShoppingCart className="h-4 w-4" />}
+              />
+
+              <SourceBadge logos={RD_LOGOS} alt="RD Station" />
+            </div>
+
+            <div className="relative">
+              <MetricCard
+                title="Receita"
+                value={formatCurrency(total.revenue_crm ?? total.revenue ?? 0)}
+                subValue={`Ticket Médio: ${formatCurrency(
+                  total.sales_crm ?? total.sales
+                    ? (total.revenue_crm ?? total.revenue ?? 0) /
+                        (total.sales_crm ?? total.sales)
+                    : 0
+                )}`}
+                icon={<DollarSign className="h-4 w-4" />}
+                className="border-red-100 bg-red-50/50"
+              />
+
+              <SourceBadge logos={RD_LOGOS} alt="RD Station" />
+            </div>
           </div>
 
           {/* DIREITA: Funil */}
