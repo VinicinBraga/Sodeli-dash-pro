@@ -21,17 +21,25 @@ export const MetricCard: React.FC<MetricCardProps> = ({
   className,
 }) => {
   return (
-    <Card className={cn("bg-white border-[#E5E5E5]", className)}>
+    <Card
+      className={cn(
+        "bg-white border-[#E5E5E5] dark:bg-[#0f0f10] dark:border-[#2a2a2a]",
+        className
+      )}
+    >
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium text-gray-500 uppercase tracking-wider">
+        <CardTitle className="text-sm font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400">
           {title}
         </CardTitle>
-        {icon && <div className="text-gray-400">{icon}</div>}
+
+        {icon && <div className="text-gray-400 dark:text-gray-500">{icon}</div>}
       </CardHeader>
+
       <CardContent>
-        <div className="text-2xl font-bold text-[#333333]">{value}</div>
+        <div className="text-2xl font-bold dark:text-[#f5f5f5]">{value}</div>
+
         {subValue && (
-          <div className="flex items-center mt-1 text-xl text-gray-500">
+          <div className="flex items-center mt-1 text-xl text-gray-500 dark:text-gray-400">
             {trend === "up" && (
               <ArrowUpRight className="h-3 w-3 text-green-500 mr-1" />
             )}

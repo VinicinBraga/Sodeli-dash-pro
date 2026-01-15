@@ -30,7 +30,7 @@ import {
 import ga4Logo from "../assets/ga4Logo.png";
 import googleLogo from "../assets/googleAdsLogo.png";
 import metaLogo from "../assets/metaAdsLogo.png";
-import linkedinLogo from "../assets/linkedinLogo.jpeg";
+import linkedinLogo from "../assets/linkedinLogo.png";
 import rdLogo from "../assets/rdStationLogo.png";
 
 const PAID_MEDIA_LOGOS = [
@@ -218,7 +218,7 @@ function SourceBadge({
   return (
     <div
       className="
-        absolute bottom-3 right-2 
+        absolute bottom-6 right-5 
         flex items-center gap-1
         translate-y-[-3px]
       "
@@ -809,7 +809,6 @@ export const FunnelView: React.FC = () => {
                     : 0
                 )}`}
                 icon={<DollarSign className="h-4 w-4" />}
-                className="border-red-100 bg-red-50/50"
               />
 
               <SourceBadge logos={RD_LOGOS} alt="RD Station" />
@@ -995,7 +994,15 @@ export const FunnelView: React.FC = () => {
 
                 <button
                   onClick={() => setSelectedPlatform(p)}
-                  className="w-full mt-2 py-2 px-4 bg-gray-50 hover:bg-gray-100 text-gray-700 text-sm font-medium rounded-md transition-colors"
+                  className="
+    w-full mt-2 py-2 px-4
+    rounded-md
+    text-sm font-medium
+    transition-colors
+
+    bg-gray-100 text-gray-700 hover:bg-gray-200
+    dark:bg-gray-900 dark:text-gray-100 dark:hover:bg-gray-800
+  "
                 >
                   Mais detalhes
                 </button>
@@ -1185,7 +1192,7 @@ export const FunnelView: React.FC = () => {
                     <Line
                       type="monotone"
                       dataKey="revenue_actual"
-                      stroke="#171717"
+                      stroke="var(--chart-real)"
                       strokeWidth={3}
                       dot={false}
                       name="Real"
