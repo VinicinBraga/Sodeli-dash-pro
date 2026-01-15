@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { api } from "../services/api";
-import { OverviewMetrics, PlatformPerformance } from "../types";
+import { OverviewMetrics } from "../types";
 import { MetricCard } from "./MetricCard";
 import { formatCurrency, formatNumber, formatPercent } from "../lib/utils";
 import {
-  Users,
+  MousePointerClick,
   Filter,
-  Target,
+  ShoppingCart,
   DollarSign,
   TrendingUp,
   BarChart3,
@@ -22,11 +22,61 @@ import {
   YAxis,
   Tooltip,
   CartesianGrid,
+  LineChart,
+  Line,
+  Legend,
 } from "recharts";
 
 type OverviewResponse = {
   total: OverviewMetrics;
-  platforms: any[]; // rows agregadas por date+platform (vem do backend)
+  platforms: any[];
+  crm_by_platform?: Record<string, { sales_crm: number; revenue_crm: number }>;
+};
+
+type PeriodKey = "today" | "month" | "quarter" | "year" | "custom";
+
+type DailyData = { date: string; spend: number; leads: number };
+
+type PlatformCard = {
+  platform: string;
+  leads: number;
+  qualified_leads: number;
+  opportunities: number;
+
+  spend: number;
+  clicks: number;
+  impressions: number;
+
+  // CRM por plataforma
+  sales_crm: number;
+  revenue_crm: number;
+
+  // métricas derivadas
+  cpl: number | null; // spend/leads
+  cpv: number | null; // spend/sales_crm
+  roas: number | null; // revenue_crm/spend
+  ticket: number | null; // revenue_crm/sales_crm
+
+  dailyHistory: DailyData[];
+};
+
+type RevenuePoint = {
+  date: string; // ISO esperado: YYYY-MM-DD
+  revenue_actual: number;
+  expected: number;
+  pessimistic: number;
+  optimistic: number;
+  is_history: boolean;
+};
+
+type RevenueForecastResponse = {
+  accuracy_rate: number; // 0..1
+  series: RevenuePoint[];
+  start: string;
+  end: string;
+  horizon: number;
+  maWindow: number;
+  band: number;
 };
 
 const platformLabel: Record<string, string> = {
@@ -34,9 +84,8 @@ const platformLabel: Record<string, string> = {
   google_ads: "Google Ads",
   meta_ads: "Meta Ads",
   linkedin_ads: "LinkedIn Ads",
+  other: "Outros",
 };
-
-type PeriodKey = "today" | "month" | "quarter" | "year" | "custom";
 
 const FILTERS_KEY = "sodeli_funnel_filters_v1";
 
@@ -73,15 +122,53 @@ function startOfYearISO(): string {
   return `${d.getFullYear()}-01-01`;
 }
 
-// Normaliza o campo date que pode vir como:
-// - "2025-12-01"
-// - { value: "2025-12-01" }
+// Normaliza campo date (BQ pode vir como string ou { value: string })
 function normalizeDateValue(date: any): string {
   if (!date) return "";
   if (typeof date === "string") return date;
   if (typeof date === "object" && typeof date.value === "string")
     return date.value;
   return String(date);
+}
+
+function normalizeBQDate(d: any): string {
+  if (!d) return "";
+  if (typeof d === "string") return d;
+  if (typeof d === "object" && typeof d.value === "string") return d.value;
+  return String(d);
+}
+
+/**
+ * Converte QUALQUER formato comum para ISO "YYYY-MM-DD"
+ * - "YYYY-MM-DD" => ok
+ * - "YYYY/MM/DD" => troca "/" por "-"
+ * - "DD/MM/YYYY" => vira "YYYY-MM-DD"
+ * - "{ value: ... }" => resolve antes
+ */
+function toISODate(d: any): string {
+  const raw = normalizeBQDate(d);
+  if (!raw) return "";
+
+  const s = String(raw).slice(0, 10);
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+
+  if (/^\d{4}\/\d{2}\/\d{2}$/.test(s)) return s.replaceAll("/", "-");
+
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) {
+    const [dd, mm, yyyy] = s.split("/");
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  return s;
+}
+
+function formatDM(iso: string): string {
+  const s = String(iso).slice(0, 10);
+  const dt = new Date(`${s}T00:00:00`);
+  return isNaN(dt.getTime())
+    ? s
+    : dt.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
 }
 
 function safeReadFilters(): any | null {
@@ -100,9 +187,9 @@ function isValidISODate(s: any): s is string {
 export const FunnelView: React.FC = () => {
   const [loading, setLoading] = useState(true);
 
-  // ===== Filtros (persistidos)
   const saved = safeReadFilters();
 
+  // ===== Filtros (draft vs applied)
   const [period, setPeriod] = useState<PeriodKey>(
     (saved?.period as PeriodKey) ?? "custom"
   );
@@ -115,19 +202,37 @@ export const FunnelView: React.FC = () => {
     isValidISODate(saved?.dateEnd) ? saved.dateEnd : todayISO()
   );
 
-  const [platform, setPlatform] = useState<string>(saved?.platform ?? "all");
+  // Draft (muda no select)
+  const [platformDraft, setPlatformDraft] = useState<string>(
+    saved?.platform ?? "all"
+  );
+  // Applied (só muda ao clicar em "Aplicar filtros")
+  const [platformApplied, setPlatformApplied] = useState<string>(
+    saved?.platform ?? "all"
+  );
 
   const [data, setData] = useState<OverviewResponse | null>(null);
-  const [selectedPlatform, setSelectedPlatform] =
-    useState<PlatformPerformance | null>(null);
 
-  // salva filtros no localStorage
+  // modal
+  const [selectedPlatform, setSelectedPlatform] = useState<PlatformCard | null>(
+    null
+  );
+
+  const [revLoading, setRevLoading] = useState(false);
+  const [revData, setRevData] = useState<RevenueForecastResponse | null>(null);
+
+  // salva filtros no localStorage (o que vale para os dados)
   useEffect(() => {
     localStorage.setItem(
       FILTERS_KEY,
-      JSON.stringify({ period, dateStart, dateEnd, platform })
+      JSON.stringify({
+        period,
+        dateStart,
+        dateEnd,
+        platform: platformApplied,
+      })
     );
-  }, [period, dateStart, dateEnd, platform]);
+  }, [period, dateStart, dateEnd, platformApplied]);
 
   // Quando o período muda, ajusta as datas (exceto custom)
   useEffect(() => {
@@ -152,16 +257,17 @@ export const FunnelView: React.FC = () => {
       setDateEnd(todayISO());
       return;
     }
-    // custom -> não mexe nas datas
+    // custom -> não mexe
   }, [period]);
 
-  const fetchData = async () => {
+  // ===== Fetches aceitam plat como parâmetro (aplicado)
+  const fetchData = async (plat: string) => {
     setLoading(true);
     try {
       const result = await api.getOverview({
         dateStart,
         dateEnd,
-        platform,
+        platform: plat,
       });
       setData(result);
     } catch (error) {
@@ -172,16 +278,71 @@ export const FunnelView: React.FC = () => {
     }
   };
 
+  const fetchRevenueForecast = async (plat: string) => {
+    setRevLoading(true);
+    try {
+      const API_BASE = (
+        (import.meta as any).env?.VITE_API_BASE_URL || "http://localhost:8080"
+      ).replace(/\/$/, "");
+      const url = `${API_BASE}/api/revenue-forecast?dateStart=${dateStart}&dateEnd=${dateEnd}&platform=${plat}`;
+
+      const resp = await fetch(url);
+      const json = await resp.json();
+      if (!resp.ok) throw new Error(json?.error || "Failed revenue forecast");
+
+      setRevData(json);
+    } catch (e) {
+      console.error("Failed to fetch revenue forecast", e);
+      setRevData(null);
+    } finally {
+      setRevLoading(false);
+    }
+  };
+
+  // load inicial: usa o applied
   useEffect(() => {
-    fetchData();
+    fetchData(platformApplied);
+    fetchRevenueForecast(platformApplied);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Monta cards por plataforma + histórico diário pra modal
-  // ✅ remove "all" da grade de plataformas
-  // ✅ renomeia platform null -> "other" (Outros)
-  const platformsUI: PlatformPerformance[] = useMemo(() => {
-    if (!data?.platforms?.length) return [];
+  const platformsUI: PlatformCard[] = useMemo(() => {
+    const crmPlat = data?.crm_by_platform || {};
+
+    // ✅ Se não vier marketing, mas tem CRM, ainda monta card de "other"
+    if (!data?.platforms?.length) {
+      if (platformApplied === "other") {
+        const crmOther = crmPlat.other || { sales_crm: 0, revenue_crm: 0 };
+
+        return [
+          {
+            platform: "other",
+            leads: Number(data?.total?.leads ?? 0),
+            qualified_leads: 0,
+            opportunities: Number(data?.total?.opportunities ?? 0),
+
+            spend: 0,
+            clicks: 0,
+            impressions: 0,
+
+            sales_crm: Number(crmOther.sales_crm || 0),
+            revenue_crm: Number(crmOther.revenue_crm || 0),
+
+            cpl: null,
+            cpv: null,
+            roas: null,
+            ticket:
+              Number(crmOther.sales_crm || 0) > 0
+                ? Number(crmOther.revenue_crm || 0) /
+                  Number(crmOther.sales_crm || 0)
+                : null,
+
+            dailyHistory: [],
+          },
+        ];
+      }
+      return [];
+    }
 
     const map = new Map<
       string,
@@ -190,21 +351,19 @@ export const FunnelView: React.FC = () => {
         leads: number;
         qualified_leads: number;
         opportunities: number;
-        sales: number;
         spend: number;
         clicks: number;
         impressions: number;
-        dailyHistory: Array<{ date: string; spend: number; leads: number }>;
+        dailyHistory: DailyData[];
       }
     >();
 
     for (const r of data.platforms) {
       const rawPlatform = r.platform;
 
-      // ❌ não entra no grid (é agregado gravado na base)
+      // não entra agregado "all" no grid
       if (rawPlatform === "all") continue;
 
-      // null/undefined vira "other"
       const p = rawPlatform ? rawPlatform : "other";
       const dateStr = normalizeDateValue(r.date);
 
@@ -213,7 +372,6 @@ export const FunnelView: React.FC = () => {
         leads: 0,
         qualified_leads: 0,
         opportunities: 0,
-        sales: 0,
         spend: 0,
         clicks: 0,
         impressions: 0,
@@ -222,8 +380,11 @@ export const FunnelView: React.FC = () => {
 
       cur.leads += Number(r.leads || 0);
       cur.qualified_leads += Number(r.qualified_leads || 0);
-      cur.opportunities += Number(r.opportunities || 0);
-      cur.sales += Number(r.sales || 0);
+      cur.opportunities = Math.max(
+        cur.opportunities,
+        Number(r.opportunities || 0)
+      );
+
       cur.spend += Number(r.spend || 0);
       cur.clicks += Number(r.clicks || 0);
       cur.impressions += Number(r.impressions || 0);
@@ -239,40 +400,77 @@ export const FunnelView: React.FC = () => {
       map.set(p, cur);
     }
 
-    const arr = Array.from(map.values()).map((x) => {
-      const cpl = x.leads > 0 ? x.spend / x.leads : null;
-      const cpv = x.sales > 0 ? x.spend / x.sales : null;
-
+    let arr: PlatformCard[] = Array.from(map.values()).map((x) => {
       x.dailyHistory.sort((a, b) => a.date.localeCompare(b.date));
+
+      const crmForThis = crmPlat[x.platform] || {
+        sales_crm: 0,
+        revenue_crm: 0,
+      };
+      const sales_crm = Number(crmForThis.sales_crm || 0);
+      const revenue_crm = Number(crmForThis.revenue_crm || 0);
+
+      const cpl = x.leads > 0 ? x.spend / x.leads : null;
+      const cpv = sales_crm > 0 ? x.spend / sales_crm : null;
+      const roas = x.spend > 0 ? revenue_crm / x.spend : null;
+      const ticket = sales_crm > 0 ? revenue_crm / sales_crm : null;
 
       return {
         platform: x.platform,
         leads: x.leads,
         qualified_leads: x.qualified_leads,
         opportunities: x.opportunities,
-        sales: x.sales,
+
         spend: x.spend,
         clicks: x.clicks,
         impressions: x.impressions,
+
+        sales_crm,
+        revenue_crm,
+
         cpl,
         cpv,
-        // @ts-ignore
+        roas,
+        ticket,
+
         dailyHistory: x.dailyHistory,
-      } as PlatformPerformance;
+      };
     });
 
-    // ordena: google/meta/linkedin primeiro, depois outros
+    // ✅ Se filtro aplicado for "other", garante que o card use os valores do total (CRM)
+    if (platformApplied === "other") {
+      const crmOther = crmPlat.other || { sales_crm: 0, revenue_crm: 0 };
+      arr = [
+        {
+          platform: "other",
+          leads: Number(data?.total?.leads ?? 0),
+          qualified_leads: 0,
+          opportunities: Number(data?.total?.opportunities ?? 0),
+          spend: 0,
+          clicks: 0,
+          impressions: 0,
+          sales_crm: Number(crmOther.sales_crm || 0),
+          revenue_crm: Number(crmOther.revenue_crm || 0),
+          cpl: null,
+          cpv: null,
+          roas: null,
+          ticket:
+            Number(crmOther.sales_crm || 0) > 0
+              ? Number(crmOther.revenue_crm || 0) /
+                Number(crmOther.sales_crm || 0)
+              : null,
+          dailyHistory: [],
+        },
+      ];
+      return arr;
+    }
+
     const order = ["google_ads", "meta_ads", "linkedin_ads", "other"];
-    arr.sort(
-      (a: any, b: any) => order.indexOf(a.platform) - order.indexOf(b.platform)
-    );
+    arr.sort((a, b) => order.indexOf(a.platform) - order.indexOf(b.platform));
 
     return arr;
-  }, [data]);
+  }, [data, platformApplied]);
 
-  // ✅ grid responsivo:
-  // - se tiver 4 cards (google/meta/linkedin/outros) => 2x2 no desktop
-  // - senão => 3 colunas no desktop
   const platformGridClass =
     platformsUI.length === 4
       ? "grid-cols-1 md:grid-cols-2"
@@ -281,7 +479,7 @@ export const FunnelView: React.FC = () => {
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-600"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-600" />
       </div>
     );
   }
@@ -289,6 +487,40 @@ export const FunnelView: React.FC = () => {
   if (!data) return <div>Erro ao carregar dados.</div>;
 
   const total = data.total;
+
+  const leads = total.leads ?? 0;
+  const visits = total.visits ?? 0;
+  const opps = total.opportunities ?? 0;
+  const sales = total.sales_crm ?? total.sales ?? 0;
+
+  const rateLeadsVisits = visits > 0 ? leads / visits : 0;
+  const rateOppsLeads = leads > 0 ? opps / leads : 0;
+  const rateSalesOpps = opps > 0 ? sales / opps : 0;
+
+  // ===== Série ÚNICA pro gráfico
+  const seriesChart = (revData?.series || [])
+    .map((p: any) => {
+      const date = toISODate(p.date);
+
+      return {
+        date,
+        revenue_actual: Number(p.revenue_actual ?? 0),
+        expected: Number(p.expected ?? 0),
+        optimistic: Number(p.optimistic ?? 0),
+        pessimistic: Number(p.pessimistic ?? 0),
+      };
+    })
+    .filter((p: any) => !!p.date)
+    .sort((a: any, b: any) => a.date.localeCompare(b.date));
+
+  // ===== Card Visitas/Cliques deve respeitar APENAS o filtro aplicado
+  const isFiltered = platformApplied !== "all";
+  const topLabel = isFiltered ? "Cliques" : "Visitas";
+  const topValue = isFiltered ? total.clicks ?? 0 : total.visits ?? 0;
+  const topSubLabel = isFiltered ? "CPC" : "Custo por Sessão";
+  const topSubValue = isFiltered
+    ? formatCurrency(total.clicks ? total.spend / total.clicks : 0)
+    : formatCurrency(total.visits ? total.spend / total.visits : 0);
 
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
@@ -339,24 +571,32 @@ export const FunnelView: React.FC = () => {
               />
             </div>
 
-            {/* Plataforma */}
+            {/* Plataforma (DRAFT) */}
             <div className="flex flex-col">
               <label className="text-xs text-gray-500 mb-1">Plataforma</label>
               <select
-                value={platform}
-                onChange={(e) => setPlatform(e.target.value)}
+                value={platformDraft}
+                onChange={(e) => setPlatformDraft(e.target.value)}
                 className="h-10 px-3 rounded-md border border-gray-200 text-sm bg-white"
               >
                 <option value="all">Todas</option>
                 <option value="google_ads">Google Ads</option>
                 <option value="meta_ads">Meta Ads</option>
                 <option value="linkedin_ads">LinkedIn Ads</option>
+                <option value="other">Outros</option>
               </select>
             </div>
           </div>
 
           <button
-            onClick={fetchData}
+            onClick={() => {
+              // ✅ aplica a plataforma (somente aqui)
+              setPlatformApplied(platformDraft);
+
+              // ✅ busca usando a plataforma do draft (pra não depender do setState assíncrono)
+              fetchData(platformDraft);
+              fetchRevenueForecast(platformDraft);
+            }}
             className="h-10 px-4 rounded-md bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors"
           >
             Aplicar filtros
@@ -367,7 +607,7 @@ export const FunnelView: React.FC = () => {
           Intervalo: <span className="font-medium">{dateStart}</span> →{" "}
           <span className="font-medium">{dateEnd}</span> · Plataforma:{" "}
           <span className="font-medium">
-            {platformLabel[platform] ?? platform}
+            {platformLabel[platformApplied] ?? platformApplied}
           </span>
         </p>
       </section>
@@ -378,48 +618,184 @@ export const FunnelView: React.FC = () => {
           <Activity className="h-5 w-5 text-red-600" />
           Visão Geral do Funil
         </h2>
+        <div className="flex flex-wrap items-center justify-center gap-6 text-xs text-gray-500 mb-3">
+          <div>
+            Eficiência{" "}
+            <span className="font-medium text-gray-700">
+              Leads / Sessões (GA4)
+            </span>{" "}
+            <span className="font-semibold text-gray-900">
+              {formatPercent(rateLeadsVisits)}
+            </span>
+          </div>
 
-        {/* ✅ 3 + 3 no desktop */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          <MetricCard
-            title="Leads Totais"
-            value={formatNumber(total.leads)}
-            icon={<Users className="h-4 w-4" />}
-          />
-          <MetricCard
-            title="Leads Qualificados"
-            value={formatNumber(total.qualified_leads)}
-            subValue={`Taxa: ${formatPercent(total.rate_leads_to_qualified)}`}
-            trend="up"
-            icon={<Filter className="h-4 w-4" />}
-          />
-          <MetricCard
-            title="Oportunidades"
-            value={formatNumber(total.opportunities)}
-            subValue={`Taxa: ${formatPercent(
-              total.rate_qualified_to_opportunity
-            )}`}
-            trend="up"
-            icon={<Target className="h-4 w-4" />}
-          />
-          <MetricCard
-            title="Vendas"
-            value={formatNumber((total as any).sales_crm ?? total.sales)}
-            subValue={`Taxa: ${formatPercent(total.rate_opportunity_to_sale)}`}
-            trend="up"
-            icon={<DollarSign className="h-4 w-4" />}
-          />
-          <MetricCard
-            title="Valor de Vendas (R$)"
-            value={formatCurrency((total as any).revenue_crm ?? 0)}
-            icon={<DollarSign className="h-4 w-4" />}
-          />
-          <MetricCard
-            title="Investimento"
-            value={formatCurrency(total.spend)}
-            icon={<TrendingUp className="h-4 w-4" />}
-            className="border-red-100 bg-red-50/50"
-          />
+          <div>
+            Tx Conv.{" "}
+            <span className="font-medium text-gray-700">Oport. / Leads</span>{" "}
+            <span className="font-semibold text-gray-900">
+              {formatPercent(rateOppsLeads)}
+            </span>
+          </div>
+
+          <div>
+            Tx Conv.{" "}
+            <span className="font-medium text-gray-700">Vendas / Oport.</span>{" "}
+            <span className="font-semibold text-gray-900">
+              {formatPercent(rateSalesOpps)}
+            </span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {/* ESQUERDA: Big Numbers */}
+          <div className="lg:col-span-2 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <MetricCard
+              title="Investimentos"
+              value={formatCurrency(total.spend)}
+              subValue={`ROAS: ${formatNumber(
+                total.spend
+                  ? (total.revenue_crm ?? total.revenue ?? 0) / total.spend
+                  : 0
+              )}`}
+              trend="neutral"
+              icon={<BarChart3 className="h-4 w-4" />}
+            />
+
+            <MetricCard
+              title={topLabel}
+              value={formatNumber(topValue)}
+              subValue={`${topSubLabel}: ${topSubValue}`}
+              trend="neutral"
+              icon={<MousePointerClick className="h-4 w-4" />}
+            />
+
+            <MetricCard
+              title="Leads"
+              value={formatNumber(total.leads ?? 0)}
+              subValue={`CPL: ${formatCurrency(
+                total.leads ? total.spend / total.leads : 0
+              )}`}
+              trend="neutral"
+              icon={<Filter className="h-4 w-4" />}
+            />
+
+            <MetricCard
+              title="Oportunidades"
+              value={formatNumber(total.opportunities ?? 0)}
+              subValue={`CPO: ${formatCurrency(
+                total.opportunities ? total.spend / total.opportunities : 0
+              )}`}
+              trend="neutral"
+              icon={<TrendingUp className="h-4 w-4" />}
+            />
+
+            <MetricCard
+              title="Vendas"
+              value={formatNumber(total.sales_crm ?? total.sales ?? 0)}
+              subValue={`CPA: ${formatCurrency(
+                total.sales_crm ?? total.sales
+                  ? total.spend / (total.sales_crm ?? total.sales)
+                  : 0
+              )}`}
+              trend="neutral"
+              icon={<ShoppingCart className="h-4 w-4" />}
+            />
+
+            <MetricCard
+              title="Receita"
+              value={formatCurrency(total.revenue_crm ?? total.revenue ?? 0)}
+              subValue={`Ticket Médio: ${formatCurrency(
+                total.sales_crm ?? total.sales
+                  ? (total.revenue_crm ?? total.revenue ?? 0) /
+                      (total.sales_crm ?? total.sales)
+                  : 0
+              )}`}
+              trend="neutral"
+              icon={<DollarSign className="h-4 w-4" />}
+              className="border-red-100 bg-red-50/50"
+            />
+          </div>
+
+          {/* DIREITA: Funil */}
+          <Card className="bg-white lg:col-span-1">
+            <CardHeader className="border-b border-gray-100 pb-4">
+              <CardTitle className="text-sm font-semibold text-gray-700">
+                Funil de Conversão
+              </CardTitle>
+            </CardHeader>
+
+            <CardContent className="pt-6">
+              {(() => {
+                const steps = [
+                  {
+                    key: "top",
+                    label: isFiltered ? "Cliques" : "Visitas",
+                    value: isFiltered ? total.clicks ?? 0 : total.visits ?? 0,
+                  },
+                  { key: "leads", label: "Leads", value: total.leads ?? 0 },
+                  {
+                    key: "opps",
+                    label: "Oportunidades",
+                    value: total.opportunities ?? 0,
+                  },
+                  {
+                    key: "sales",
+                    label: "Vendas",
+                    value: total.sales_crm ?? total.sales ?? 0,
+                  },
+                ];
+
+                const max = Math.max(...steps.map((s) => s.value), 1);
+                const pct = (a: number, b: number) => (b > 0 ? a / b : 0);
+
+                return (
+                  <div className="space-y-4">
+                    {steps.map((s, idx) => {
+                      const prev = idx === 0 ? null : steps[idx - 1];
+                      const conv = prev ? pct(s.value, prev.value) : null;
+                      const widthPct = Math.max(
+                        8,
+                        Math.round((s.value / max) * 100)
+                      );
+
+                      return (
+                        <div key={s.key} className="space-y-1">
+                          <div className="flex items-center justify-between text-xs text-gray-600">
+                            <div className="font-semibold text-gray-700">
+                              {s.label}{" "}
+                              <span className="font-normal text-gray-500">
+                                ({formatNumber(s.value)})
+                              </span>
+                            </div>
+                            {conv !== null && (
+                              <div className="text-gray-500">
+                                Conv.:{" "}
+                                <span className="font-semibold text-gray-700">
+                                  {formatPercent(conv)}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="w-full bg-gray-100 rounded-md h-6 overflow-hidden">
+                            <div
+                              className="h-6 rounded-md"
+                              style={{
+                                width: `${widthPct}%`,
+                                backgroundColor: "#ef002c",
+                                opacity: 0.25 + idx * 0.18,
+                              }}
+                              title={`${s.label}: ${formatNumber(s.value)}`}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </CardContent>
+          </Card>
         </div>
       </section>
 
@@ -431,16 +807,14 @@ export const FunnelView: React.FC = () => {
         </h2>
 
         <div className={`grid ${platformGridClass} gap-6`}>
-          {platformsUI.map((p: any) => (
+          {platformsUI.map((p) => (
             <Card
               key={p.platform}
               className="bg-white hover:shadow-md transition-shadow duration-200"
             >
               <CardHeader className="border-b border-gray-100 pb-4">
                 <CardTitle className="capitalize flex justify-between items-center">
-                  {p.platform === "other"
-                    ? "Outros"
-                    : (p.platform || "").replaceAll("_", " ")}
+                  {platformLabel[p.platform] ?? p.platform}
                   <PieChart className="h-4 w-4 text-gray-400" />
                 </CardTitle>
               </CardHeader>
@@ -448,37 +822,80 @@ export const FunnelView: React.FC = () => {
               <CardContent className="pt-6 space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <p className="text-xs text-gray-500">Leads</p>
-                    <p className="text-lg font-bold">{formatNumber(p.leads)}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-gray-500">Vendas</p>
-                    <p className="text-lg font-bold">{formatNumber(p.sales)}</p>
-                  </div>
-                  <div>
                     <p className="text-xs text-gray-500">Investimento</p>
                     <p className="text-lg font-bold text-red-600">
                       {formatCurrency(p.spend)}
                     </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      ROAS: {formatNumber(p.roas ?? 0)}
+                    </p>
                   </div>
+
                   <div>
-                    <p className="text-xs text-gray-500">CPL</p>
+                    <p className="text-xs text-gray-500">Cliques</p>
                     <p className="text-lg font-bold">
-                      {formatCurrency(p.cpl ?? 0)}
+                      {formatNumber(p.clicks)}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      CPC: {formatCurrency(p.clicks ? p.spend / p.clicks : 0)}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs text-gray-500">Leads</p>
+                    <p className="text-lg font-bold">{formatNumber(p.leads)}</p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      CPL: {formatCurrency(p.cpl ?? 0)}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs text-gray-500">Oportunidades</p>
+                    <p className="text-lg font-bold">
+                      {formatNumber(p.opportunities)}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      CPO:{" "}
+                      {formatCurrency(
+                        p.opportunities ? p.spend / p.opportunities : 0
+                      )}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs text-gray-500">Vendas</p>
+                    <p className="text-lg font-bold">
+                      {formatNumber(p.sales_crm)}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      CPA:{" "}
+                      {formatCurrency(p.sales_crm ? p.spend / p.sales_crm : 0)}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs text-gray-500">Receita</p>
+                    <p className="text-lg font-bold">
+                      {formatCurrency(p.revenue_crm)}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-1">
+                      Ticket: {formatCurrency(p.ticket ?? 0)}
                     </p>
                   </div>
                 </div>
 
                 <div className="pt-2 border-t border-gray-50">
                   <div className="flex justify-between text-xs text-gray-500 mb-1">
-                    <span>CPV: {formatCurrency(p.cpv ?? 0)}</span>
-                    <span>Cliques: {formatNumber(p.clicks)}</span>
+                    <span>Impressões: {formatNumber(p.impressions)}</span>
+                    <span>
+                      Plataforma: {platformLabel[p.platform] ?? p.platform}
+                    </span>
                   </div>
                 </div>
 
                 <button
                   onClick={() => setSelectedPlatform(p)}
-                  className="w-full mt-4 py-2 px-4 bg-gray-50 hover:bg-gray-100 text-gray-700 text-sm font-medium rounded-md transition-colors"
+                  className="w-full mt-2 py-2 px-4 bg-gray-50 hover:bg-gray-100 text-gray-700 text-sm font-medium rounded-md transition-colors"
                 >
                   Mais detalhes
                 </button>
@@ -494,9 +911,8 @@ export const FunnelView: React.FC = () => {
           <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-gray-100 flex justify-between items-center">
               <h3 className="text-xl font-bold capitalize">
-                {selectedPlatform.platform === "other"
-                  ? "Outros"
-                  : (selectedPlatform.platform || "").replaceAll("_", " ")}{" "}
+                {platformLabel[selectedPlatform.platform] ??
+                  selectedPlatform.platform}{" "}
                 - Detalhes Diários
               </h3>
               <button
@@ -514,50 +930,7 @@ export const FunnelView: React.FC = () => {
                 </h4>
 
                 <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart
-                    data={
-                      ((selectedPlatform as any).dailyHistory ?? []) as any[]
-                    }
-                  >
-                    <defs>
-                      <linearGradient
-                        id="colorSpend"
-                        x1="0"
-                        y1="0"
-                        x2="0"
-                        y2="1"
-                      >
-                        <stop
-                          offset="5%"
-                          stopColor="#ef4444"
-                          stopOpacity={0.1}
-                        />
-                        <stop
-                          offset="95%"
-                          stopColor="#ef4444"
-                          stopOpacity={0}
-                        />
-                      </linearGradient>
-                      <linearGradient
-                        id="colorLeads"
-                        x1="0"
-                        y1="0"
-                        x2="0"
-                        y2="1"
-                      >
-                        <stop
-                          offset="5%"
-                          stopColor="#3b82f6"
-                          stopOpacity={0.1}
-                        />
-                        <stop
-                          offset="95%"
-                          stopColor="#3b82f6"
-                          stopOpacity={0}
-                        />
-                      </linearGradient>
-                    </defs>
-
+                  <AreaChart data={selectedPlatform.dailyHistory ?? []}>
                     <CartesianGrid
                       strokeDasharray="3 3"
                       vertical={false}
@@ -566,14 +939,13 @@ export const FunnelView: React.FC = () => {
 
                     <XAxis
                       dataKey="date"
-                      tickFormatter={(val) =>
-                        new Date(val).toLocaleDateString("pt-BR", {
-                          day: "2-digit",
-                          month: "2-digit",
-                        })
-                      }
                       tick={{ fontSize: 12 }}
+                      tickFormatter={(val) => {
+                        const iso = toISODate(val);
+                        return formatDM(iso);
+                      }}
                     />
+
                     <YAxis yAxisId="left" tick={{ fontSize: 12 }} />
                     <YAxis
                       yAxisId="right"
@@ -582,9 +954,13 @@ export const FunnelView: React.FC = () => {
                     />
 
                     <Tooltip
-                      labelFormatter={(label) =>
-                        new Date(label).toLocaleDateString("pt-BR")
-                      }
+                      labelFormatter={(label) => {
+                        const iso = toISODate(label);
+                        const dt = new Date(`${iso}T00:00:00`);
+                        return isNaN(dt.getTime())
+                          ? iso
+                          : dt.toLocaleDateString("pt-BR");
+                      }}
                       formatter={(value: number, name: string) => [
                         name === "spend" ? formatCurrency(value) : value,
                         name === "spend" ? "Investimento" : "Leads",
@@ -595,18 +971,18 @@ export const FunnelView: React.FC = () => {
                       yAxisId="left"
                       type="monotone"
                       dataKey="spend"
-                      stroke="#ef4444"
-                      fillOpacity={1}
-                      fill="url(#colorSpend)"
+                      stroke="#ef002c"
+                      fillOpacity={0.15}
+                      fill="#ef002c"
                       name="spend"
                     />
                     <Area
                       yAxisId="right"
                       type="monotone"
                       dataKey="leads"
-                      stroke="#3b82f6"
-                      fillOpacity={1}
-                      fill="url(#colorLeads)"
+                      stroke="#ef002c"
+                      fillOpacity={0.08}
+                      fill="#ef002c"
                       name="leads"
                     />
                   </AreaChart>
@@ -616,6 +992,141 @@ export const FunnelView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Receita Histórica & Projeção */}
+      <section>
+        <h2 className="text-xl font-bold mb-4 text-gray-800 flex items-center gap-2">
+          <Activity className="h-5 w-5 text-red-600" />
+          Receita Histórica & Projeção
+        </h2>
+
+        <Card className="bg-white">
+          <CardHeader className="border-b border-gray-100 pb-4 flex flex-row items-center justify-between">
+            <CardTitle className="text-sm font-semibold text-gray-700">
+              Receita (Real x Cenários)
+            </CardTitle>
+
+            <div className="text-xs px-2 py-1 rounded-md bg-gray-50 border border-gray-200 text-gray-700">
+              Acurácia:{" "}
+              <span className="font-semibold">
+                {formatPercent(revData?.accuracy_rate ?? 0)}
+              </span>
+            </div>
+          </CardHeader>
+
+          <CardContent className="pt-6">
+            {revLoading && (
+              <div className="flex h-56 items-center justify-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-red-600" />
+              </div>
+            )}
+
+            {!revLoading && !revData && (
+              <div className="text-sm text-gray-500">
+                Não foi possível carregar o gráfico de receita.
+              </div>
+            )}
+
+            {!revLoading && revData && (
+              <div className="h-80 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={seriesChart}>
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      vertical={false}
+                      stroke="#eee"
+                    />
+
+                    <XAxis
+                      dataKey="date"
+                      interval="preserveStartEnd"
+                      minTickGap={24}
+                      tickMargin={8}
+                      tick={{ fontSize: 12 }}
+                      tickFormatter={(val) => formatDM(String(val))}
+                    />
+
+                    <YAxis
+                      tick={{ fontSize: 12 }}
+                      tickFormatter={(v) =>
+                        typeof v === "number"
+                          ? v.toLocaleString("pt-BR", {
+                              notation: "compact",
+                              compactDisplay: "short",
+                            })
+                          : String(v)
+                      }
+                    />
+
+                    <Tooltip
+                      labelFormatter={(label) => {
+                        const iso = toISODate(label);
+                        const dt = new Date(`${iso}T00:00:00`);
+                        return isNaN(dt.getTime())
+                          ? iso
+                          : dt.toLocaleDateString("pt-BR");
+                      }}
+                      formatter={(value: any, name: string) => {
+                        const labelMap: Record<string, string> = {
+                          revenue_actual: "Real",
+                          expected: "Esperado",
+                          optimistic: "Otimista",
+                          pessimistic: "Pessimista",
+                        };
+                        return [
+                          formatCurrency(Number(value || 0)),
+                          labelMap[name] ?? name,
+                        ];
+                      }}
+                    />
+
+                    <Legend />
+
+                    <Line
+                      type="monotone"
+                      dataKey="revenue_actual"
+                      stroke="#171717"
+                      strokeWidth={3}
+                      dot={false}
+                      name="Real"
+                    />
+
+                    <Line
+                      type="monotone"
+                      dataKey="expected"
+                      stroke="#ef002c"
+                      strokeWidth={2}
+                      dot={false}
+                      strokeDasharray="6 4"
+                      name="Esperado"
+                    />
+
+                    <Line
+                      type="monotone"
+                      dataKey="pessimistic"
+                      stroke="#b0001f"
+                      strokeWidth={2}
+                      dot={false}
+                      strokeDasharray="2 6"
+                      name="Pessimista"
+                    />
+
+                    <Line
+                      type="monotone"
+                      dataKey="optimistic"
+                      stroke="#ef002c"
+                      strokeWidth={2}
+                      dot={false}
+                      strokeDasharray="4 4"
+                      name="Otimista"
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </section>
     </div>
   );
 };

@@ -110,25 +110,24 @@ function compareValues(
   return direction === "asc" ? result : -result;
 }
 
-function inRange(dateAny: any, startISO: string, endISO: string): boolean {
-  const iso = normalizeDateValue(dateAny);
-  if (!iso) return false;
-
-  const t = new Date(iso).getTime();
-  if (!Number.isFinite(t)) return false;
-
-  const start = new Date(startISO).getTime();
-  const end = new Date(endISO).getTime();
-
-  return t >= start && t <= end;
-}
-
 // ✅ win robusto (boolean, string, number)
 function isWonValue(win: any): boolean {
   if (win === true) return true;
   if (win === 1) return true;
   if (typeof win === "string" && win.toLowerCase() === "true") return true;
   return false;
+}
+
+// Mapeia um texto de origem para platform (mesma lógica do backend)
+function mapSourceToPlatform(sourceAny: any): string {
+  const s = normalizeStringValue(sourceAny).toLowerCase();
+
+  if (!s) return "other";
+  if (s.includes("google")) return "google_ads";
+  if (s.includes("meta") || s.includes("facebook") || s.includes("instagram"))
+    return "meta_ads";
+  if (s.includes("linkedin")) return "linkedin_ads";
+  return "other";
 }
 
 export const CRMView: React.FC = () => {
@@ -157,12 +156,15 @@ export const CRMView: React.FC = () => {
     savedCRM?.dateEnd ?? todayISO()
   );
 
+  // ✅ novo: plataforma
+  const [platform, setPlatform] = useState<string>(savedCRM?.platform ?? "all");
+
   useEffect(() => {
     localStorage.setItem(
       CRM_FILTERS_KEY,
-      JSON.stringify({ period, dateStart, dateEnd })
+      JSON.stringify({ period, dateStart, dateEnd, platform })
     );
-  }, [period, dateStart, dateEnd]);
+  }, [period, dateStart, dateEnd, platform]);
 
   useEffect(() => {
     if (period === "today") {
@@ -193,32 +195,54 @@ export const CRMView: React.FC = () => {
 
     try {
       if (activeTab === "contacts") {
+        // se seu backend não filtra contatos por plataforma ainda, o filtro vai depender dos campos do contact
         const rows = await api.getContacts({
           dateStart,
           dateEnd,
-          limit: 5000, // pode aumentar sem medo agora
-        });
+          limit: 5000,
+          platform, // ✅ envia (se backend suportar)
+        } as any);
 
-        setRawData(rows);
+        // ✅ fallback client-side (só filtra se existir algum campo de origem no contact)
+        const typed =
+          platform === "all"
+            ? rows
+            : rows.filter((c: any) => {
+                const src =
+                  c.last_conversion_source ||
+                  c.first_conversion_source ||
+                  c.source ||
+                  c.utm_source ||
+                  c.last_utm_source ||
+                  "";
+                return mapSourceToPlatform(src) === platform;
+              });
+
+        setRawData(typed);
       } else {
         const rows = await api.getDeals({
           dateStart,
           dateEnd,
           limit: 5000,
-        });
+          platform, // ✅ envia (se backend suportar)
+        } as any);
 
-        // filtro por tipo de aba (client-side)
-        const typed = rows.filter((d: any) => {
-          const stage = (d.deal_stage_name || "").toLowerCase();
-          const won = d.win === true;
+        // filtro por aba + plataforma (client-side, garante consistência)
+        const typed = rows
+          .filter((d: any) => {
+            const stage = (d.deal_stage_name || "").toLowerCase();
+            const won = isWonValue(d.win);
 
-          if (activeTab === "won") return won;
-          if (activeTab === "qualified") return stage.includes("qualific");
-          if (activeTab === "opportunity")
-            return !won && !stage.includes("perdid");
-
-          return true;
-        });
+            if (activeTab === "won") return won;
+            if (activeTab === "qualified") return stage.includes("qualific");
+            if (activeTab === "opportunity")
+              return !won && !stage.includes("perdid");
+            return true;
+          })
+          .filter((d: any) => {
+            if (platform === "all") return true;
+            return mapSourceToPlatform(d.deal_source_name) === platform;
+          });
 
         setRawData(typed);
       }
@@ -474,6 +498,22 @@ export const CRMView: React.FC = () => {
                 className="h-10 px-3 rounded-md border border-gray-200 text-sm"
               />
             </div>
+
+            {/* ✅ novo: Plataforma */}
+            <div className="flex flex-col">
+              <label className="text-xs text-gray-500 mb-1">Plataforma</label>
+              <select
+                value={platform}
+                onChange={(e) => setPlatform(e.target.value)}
+                className="h-10 px-3 rounded-md border border-gray-200 text-sm bg-white"
+              >
+                <option value="all">Todas</option>
+                <option value="google_ads">Google Ads</option>
+                <option value="meta_ads">Meta Ads</option>
+                <option value="linkedin_ads">LinkedIn Ads</option>
+                <option value="other">Outros</option>
+              </select>
+            </div>
           </div>
 
           <button
@@ -486,7 +526,8 @@ export const CRMView: React.FC = () => {
 
         <p className="text-xs text-gray-500 mt-3">
           Intervalo: <span className="font-medium">{dateStart}</span> →{" "}
-          <span className="font-medium">{dateEnd}</span>
+          <span className="font-medium">{dateEnd}</span> · Plataforma:{" "}
+          <span className="font-medium">{platform}</span>
         </p>
       </section>
 
@@ -672,3 +713,5 @@ export const CRMView: React.FC = () => {
     </div>
   );
 };
+
+export default CRMView;

@@ -8,10 +8,16 @@ export type BQValue<T> = T | { value: T } | null | undefined;
 
 export interface OverviewMetrics {
   total_users: number;
+  visits: number;
+
   leads: number;
   qualified_leads: number;
   opportunities: number;
   sales: number;
+  
+  sales_crm: number;
+  revenue_crm: number;
+  
   spend: number;
   impressions: number;
   clicks: number;
