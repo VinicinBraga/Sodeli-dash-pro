@@ -28,7 +28,12 @@ export const Layout: React.FC<LayoutProps> = ({
 
   useEffect(() => {
     const saved = localStorage.getItem(THEME_KEY);
-    const isDark = saved === "dark";
+
+    // default explícito = light (evita gente "presa" em estados estranhos)
+    const theme = saved === "dark" ? "dark" : "light";
+    localStorage.setItem(THEME_KEY, theme);
+
+    const isDark = theme === "dark";
     document.documentElement.classList.toggle("dark", isDark);
     setDarkMode(isDark);
   }, []);
