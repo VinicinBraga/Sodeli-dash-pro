@@ -669,10 +669,7 @@ export const FunnelView: React.FC = () => {
 
         <p className="text-xs text-gray-500 mt-3">
           Intervalo: <span className="font-medium">{dateStart}</span> →{" "}
-          <span className="font-medium">{dateEnd}</span> · Plataforma:{" "}
-          <span className="font-medium">
-            {platformLabel[platformApplied] ?? platformApplied}
-          </span>
+          <span className="font-medium">{dateEnd}</span>
         </p>
       </section>
 

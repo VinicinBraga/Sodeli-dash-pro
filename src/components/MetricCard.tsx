@@ -58,23 +58,18 @@ export const MetricCard: React.FC<MetricCardProps> = ({
         {/* subValue ocupa sempre 1 linha (mesmo quando não tem) */}
         <div
           className={cn(
-            "text-xl",
+            "flex items-center mt-1 text-xl whitespace-nowrap overflow-hidden text-ellipsis",
             darkMode ? "text-gray-400" : "text-gray-500"
           )}
+          title={subValue} // opcional: ao passar o mouse, vê o texto completo
         >
-          {subValue ? (
-            <span className="flex items-center">
-              {trend === "up" && (
-                <ArrowUpRight className="h-3 w-3 text-green-500 mr-1" />
-              )}
-              {trend === "down" && (
-                <ArrowDownRight className="h-3 w-3 text-red-500 mr-1" />
-              )}
-              {subValue}
-            </span>
-          ) : (
-            <span className="invisible">placeholder</span>
+          {trend === "up" && (
+            <ArrowUpRight className="h-3 w-3 text-green-500 mr-1 shrink-0" />
           )}
+          {trend === "down" && (
+            <ArrowDownRight className="h-3 w-3 text-red-500 mr-1 shrink-0" />
+          )}
+          <span className="overflow-hidden text-ellipsis">{subValue}</span>
         </div>
       </CardContent>
     </Card>
