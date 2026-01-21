@@ -50,27 +50,32 @@ export const MetricCard: React.FC<MetricCardProps> = ({
         )}
       </CardHeader>
 
-      <CardContent>
+      <CardContent className="flex flex-col gap-2 min-h-[90px]">
         <div className={cn("text-2xl font-bold", darkMode && "text-[#f5f5f5]")}>
           {value}
         </div>
 
-        {subValue && (
-          <div
-            className={cn(
-              "flex items-center mt-1 text-xl",
-              darkMode ? "text-gray-400" : "text-gray-500"
-            )}
-          >
-            {trend === "up" && (
-              <ArrowUpRight className="h-3 w-3 text-green-500 mr-1" />
-            )}
-            {trend === "down" && (
-              <ArrowDownRight className="h-3 w-3 text-red-500 mr-1" />
-            )}
-            {subValue}
-          </div>
-        )}
+        {/* subValue ocupa sempre 1 linha (mesmo quando não tem) */}
+        <div
+          className={cn(
+            "text-xl",
+            darkMode ? "text-gray-400" : "text-gray-500"
+          )}
+        >
+          {subValue ? (
+            <span className="flex items-center">
+              {trend === "up" && (
+                <ArrowUpRight className="h-3 w-3 text-green-500 mr-1" />
+              )}
+              {trend === "down" && (
+                <ArrowDownRight className="h-3 w-3 text-red-500 mr-1" />
+              )}
+              {subValue}
+            </span>
+          ) : (
+            <span className="invisible">placeholder</span>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
